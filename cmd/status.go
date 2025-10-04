@@ -1,11 +1,12 @@
 /*
 Copyright © 2025 NAME HERE <EMAIL ADDRESS>
-
 */
 package cmd
 
 import (
 	"fmt"
+	"kk-invest/internal/data"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -13,15 +14,18 @@ import (
 // statusCmd represents the status command
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Short: "現在の資産状況を表示します",
+	Long:  `現在の総投資額と総保有口数を計算して表示します`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("status called")
+		status, err := data.GetPortfolioStatus()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "資産状況の取得に失敗しました: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("総投資額: %d 円\n", status.TotalInvestment)
+		fmt.Printf("総保有口数: %d 口\n", status.TotalUnits)
 	},
 }
 
