@@ -95,3 +95,30 @@ func CloseDB() error {
 	}
 	return nil
 }
+
+type PortfolioStatus struct {
+	TotalInvestment int // 総投資額 (円)
+	TotalUnits      int // 総口数
+	CurrentValue    int // 現在の評価額 (円)
+	UnrealizedPL    int // 評価損益 (円)
+}
+
+func GetPortfolioStatus() (*PortfolioStatus, error) {
+	transactions, err := GetAllTransactions()
+	if err != nil {
+		return nil, err
+	}
+
+	status := &PortfolioStatus{}
+	for _, tx := range transactions {
+		if tx.Type == "buy" {
+			status.TotalInvestment += tx.AmountJPY
+			status.TotalUnits += tx.Units
+		} else if tx.Type == "sell" {
+			status.TotalInvestment -= tx.AmountJPY
+			status.TotalUnits -= tx.Units
+		}
+	}
+
+	return status, nil
+}
