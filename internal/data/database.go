@@ -57,3 +57,41 @@ func AddTransaction(txType string, amount int, units int) error {
 	_, err = stmt.Exec(now, txType, amount, units)
 	return err
 }
+
+type Transaction struct {
+	ID        int
+	Datetime  string
+	Type      string
+	AmountJPY int
+	Units     int
+}
+
+// すべての取引を取得
+func GetAllTransactions() ([]Transaction, error) {
+	querySQL := `SELECT id, datetime, type, amount_jpy, units FROM transactions ORDER BY datetime ASC`
+
+	rows, err := DB.Query(querySQL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var transactions []Transaction
+	for rows.Next() {
+		var tx Transaction
+		if err := rows.Scan(&tx.ID, &tx.Datetime, &tx.Type, &tx.AmountJPY, &tx.Units); err != nil {
+			return nil, err
+		}
+		transactions = append(transactions, tx)
+	}
+
+	return transactions, nil
+}
+
+// データベースを閉じる
+func CloseDB() error {
+	if DB != nil {
+		return DB.Close()
+	}
+	return nil
+}
