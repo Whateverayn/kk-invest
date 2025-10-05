@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -43,7 +44,7 @@ func InitDB(dataDir string) error {
 	}
 
 	historySchema := `
-	CREATE TABLE IF NOT EXISTS price_history (
+	CREATE TABLE IF NOT EXISTS transaction_history (
 		history_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		transaction_id INTEGER NOT NULL,
 		changed_at TEXT NOT NULL,
@@ -52,7 +53,7 @@ func InitDB(dataDir string) error {
 	);`
 
 	if _, err := DB.Exec(historySchema); err != nil {
-		return fmt.Errorf("failed to create price_history table: %w", err)
+		return fmt.Errorf("failed to create transaction_history table: %w", err)
 	}
 
 	exists, err := columnExists("transactions", "deleted_at")
@@ -244,6 +245,12 @@ type HistoryDetail struct {
 	Reason string `json:"reason"`
 }
 
+type EditHistoryDetail struct {
+	FieldName string `json:"field_name"` // 変更されたフィールド名
+	OldValue  string `json:"old_value"`  // 変更前の値
+	NewValue  string `json:"new_value"`  // 変更後の値
+}
+
 func SoftDeleteTransactionByID(id int, reason string) error {
 	tx, err := DB.Begin()
 	if err != nil {
@@ -283,4 +290,78 @@ func PurgeOldRecords(days int) error {
 
 	fmt.Printf("Purged records older than %d days\n", days)
 	return nil
+}
+
+// UpdateTransactionは指定されたIDの取引を更新し, 変更履歴を記録
+// updates map[string]interface{} は "amount_jpy": 11000 のように, 変更したい項目と値のペアを受け取る
+func UpdateTransaction(id int, updates map[string]interface{}, reason string) error {
+	tx, err := DB.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	now := time.Now().Format(time.RFC3339)
+
+	oldTx, err := getTransactionByID(id, tx)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("更新対象の取引 (ID: %d) が見つかりません: %w", id, err)
+	}
+
+	var params []any
+	var setClauses []string
+	for field, value := range updates {
+		setClauses = append(setClauses, fmt.Sprintf("%s = ?", field))
+		params = append(params, value)
+	}
+	params = append(params, id)
+
+	updateSQL := fmt.Sprintf("UPDATE transactions SET %s WHERE id = ?",
+		strings.Join(setClauses, ", "))
+	if _, err := tx.Exec(updateSQL, params...); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update transaction: %w", err)
+	}
+
+	historySQL := `INSERT INTO transaction_history (transaction_id, changed_at, operation_type, details) VALUES (?, ?, ?, ?)`
+	for field, newValue := range updates {
+		var oldValue any
+		switch field {
+		case "amount_jpy":
+			oldValue = oldTx.AmountJPY
+		case "units":
+			oldValue = oldTx.Units
+		case "type":
+			oldValue = oldTx.Type
+		case "datetime":
+			oldValue = oldTx.Datetime
+		default:
+			oldValue = "unknown field"
+		}
+
+		detail := EditHistoryDetail{
+			FieldName: field,
+			OldValue:  fmt.Sprintf("%v", oldValue),
+			NewValue:  fmt.Sprintf("%v", newValue),
+		}
+		detailJSON, _ := json.Marshal(detail)
+
+		if _, err := tx.Exec(historySQL, id, now, "EDIT", string(detailJSON)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to insert history record: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+func getTransactionByID(id int, tx *sql.Tx) (*Transaction, error) {
+	querySQL := `SELECT id, datetime, type, amount_jpy, units FROM transactions WHERE id = ? AND deleted_at IS NULL`
+	row := tx.QueryRow(querySQL, id)
+
+	var t Transaction
+	if err := row.Scan(&t.ID, &t.Datetime, &t.Type, &t.AmountJPY, &t.Units); err != nil {
+		return nil, err
+	}
+	return &t, nil
 }

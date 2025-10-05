@@ -11,3 +11,11 @@ func DeleteTransactionByID(id int, reason string) error {
 	}
 	return nil
 }
+
+func EditTransaction(id int, updates map[string]any, reason string) error {
+	err := data.UpdateTransaction(id, updates, reason)
+	if err != nil {
+		return err
+	}
+	return nil
+}
