@@ -59,9 +59,9 @@ var decideCmd = &cobra.Command{
 
 		fmt.Println("💰 売却判断結果 --------------------")
 		if decision.ShouldSell {
-			fmt.Println("売却推奨: はい")
+			fmt.Println("売却: はい")
 		} else {
-			fmt.Println("売却推奨: いいえ")
+			fmt.Println("売却: いいえ")
 		}
 		fmt.Printf("売却口数: %d\n", decision.UnitsToSell)
 		fmt.Printf("理由: %s\n", decision.Reason)
