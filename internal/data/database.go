@@ -39,6 +39,16 @@ func InitDB(dataDir string) error {
 		return err
 	}
 
+	createDailyPricesTableSQL := `
+	CREATE TABLE IF NOT EXISTS daily_prices (
+		date TEXT NOT NULL PRIMARY KEY,
+		price INTEGER NOT NULL
+	);`
+
+	if _, err := DB.Exec(createDailyPricesTableSQL); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -111,14 +121,54 @@ func GetPortfolioStatus() (*PortfolioStatus, error) {
 
 	status := &PortfolioStatus{}
 	for _, tx := range transactions {
-		if tx.Type == "buy" {
+		switch tx.Type {
+		case "buy":
 			status.TotalInvestment += tx.AmountJPY
 			status.TotalUnits += tx.Units
-		} else if tx.Type == "sell" {
+		case "sell":
 			status.TotalInvestment -= tx.AmountJPY
 			status.TotalUnits -= tx.Units
 		}
 	}
 
 	return status, nil
+}
+
+type DailyPrice struct {
+	Date  string // 日付 (YYYY-MM-DD)
+	Price int    // その日の終値 (1万口あたりの価格)
+}
+
+func AddDailyPrice(date string, price int) error {
+	insertSQL := `INSERT OR REPLACE INTO daily_prices (date, price) VALUES (?, ?)`
+
+	stmt, err := DB.Prepare(insertSQL)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(date, price)
+	return err
+}
+
+func GetAllDailyPrices() ([]DailyPrice, error) {
+	querySQL := `SELECT date, price FROM daily_prices ORDER BY date ASC`
+
+	rows, err := DB.Query(querySQL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var prices []DailyPrice
+	for rows.Next() {
+		var dp DailyPrice
+		if err := rows.Scan(&dp.Date, &dp.Price); err != nil {
+			return nil, err
+		}
+		prices = append(prices, dp)
+	}
+
+	return prices, nil
 }
