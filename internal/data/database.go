@@ -294,7 +294,7 @@ func PurgeOldRecords(days int) error {
 
 // UpdateTransactionは指定されたIDの取引を更新し, 変更履歴を記録
 // updates map[string]interface{} は "amount_jpy": 11000 のように, 変更したい項目と値のペアを受け取る
-func UpdateTransaction(id int, updates map[string]interface{}, reason string) error {
+func UpdateTransaction(id int, updates map[string]any, reason string) error {
 	tx, err := DB.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)

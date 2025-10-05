@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"kk-invest/internal/config"
 	"kk-invest/internal/data"
+	"kk-invest/internal/tui"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -46,8 +47,14 @@ to quickly create a Cobra application.`,
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		if !wasInitalSetup {
-			cmd.Help()
+		if wasInitalSetup {
+			// cmd.Help()
+			return
+		}
+
+		if err := tui.StartDashboard(); err != nil {
+			fmt.Fprintf(os.Stderr, "ダッシュボードの起動に失敗しました: %v\n", err)
+			os.Exit(1)
 		}
 	},
 }
