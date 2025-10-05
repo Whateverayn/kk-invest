@@ -39,6 +39,11 @@ to quickly create a Cobra application.`,
 			fmt.Fprintf(os.Stderr, "データベースの初期化に失敗しました: %v\n", err)
 			os.Exit(1)
 		}
+
+		if err := data.PurgeOldRecords(30); err != nil {
+			fmt.Fprintf(os.Stderr, "古い記録の削除に失敗しました: %v\n", err)
+			os.Exit(1)
+		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		if !wasInitalSetup {
