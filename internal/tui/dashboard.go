@@ -23,6 +23,7 @@ const (
 	viewList          viewState = iota // 一覧表示画面
 	viewConfirmDelete                  // 削除確認画面
 	viewEdit
+	viewAdd
 )
 
 // モデル
@@ -39,6 +40,7 @@ type model struct {
 	toEditID     int                   // 編集対象のID
 	inputs       []textinput.Model     // 編集用の入力フィールド
 	focusIndex   int                   // 入力フィールドのフォーカス場所
+	typeCursor   int                   // buy または sell を選択するカーソル
 }
 
 // メッセージ
@@ -84,10 +86,11 @@ func initialModel() model {
 	}
 
 	return model{
-		spinner:   s,
-		isLoading: true,
-		view:      viewList,
-		inputs:    inputs,
+		spinner:    s,
+		isLoading:  true,
+		view:       viewList,
+		inputs:     inputs,
+		typeCursor: 0, // 初期値: buy
 	}
 }
 
@@ -173,6 +176,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.inputs[0].SetValue(strconv.Itoa(m.transactions[m.cursor].AmountJPY))
 					m.inputs[1].SetValue(strconv.Itoa(m.transactions[m.cursor].Units))
 				}
+			case "a": // 追加画面
+				m.view = viewAdd
+				m.focusIndex = 0         // 金額入力にフォーカス
+				m.typeCursor = 0         // buy にカーソルをセット
+				m.inputs[0].SetValue("") // 入力欄をクリア
+				m.inputs[1].SetValue("")
+				return m, nil
 			}
 		case viewConfirmDelete:
 			switch msg.String() {
@@ -219,6 +229,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+		case viewAdd:
+			switch msg.String() {
+			case "esc":
+				m.view = viewList // 一覧へ戻る
+			case "enter":
+				m.view = viewList
+				return m, tea.Sequence(
+					addTransaction(m.inputs, m.typeCursor),
+					fetchTransactions,
+					fetchStatus,
+				)
+			case "tab", "shift+tab", "up", "down":
+				// 0: 種別選択
+				// 1: 金額入力
+				// 2: 口数入力
+				s := msg.String()
+				if s == "up" || s == "shift+tab" {
+					m.focusIndex--
+				} else {
+					m.focusIndex++
+				}
+				if m.focusIndex > 2 {
+					m.focusIndex = 0
+				}
+				if m.focusIndex < 0 {
+					m.focusIndex = 2
+				}
+
+				for i := range m.inputs {
+					if i == m.focusIndex-1 {
+						m.inputs[i].Focus()
+					} else {
+						m.inputs[i].Blur()
+					}
+				}
+				return m, nil
+			case "left", "right":
+				if m.focusIndex == 0 {
+					m.typeCursor = (m.typeCursor + 1) % 2
+				}
+			}
 		}
 	case statusLoadedMsg:
 		m.status = msg.status
@@ -237,11 +288,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if m.view == viewEdit {
-		m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
+	var cmds []tea.Cmd
+	if m.view == viewEdit || m.view == viewAdd {
+		if m.focusIndex > 0 {
+			inputIndex := m.focusIndex - 1
+			m.inputs[inputIndex], cmd = m.inputs[inputIndex].Update(msg)
+			cmds = append(cmds, cmd)
+		}
+		// m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
 	}
 
-	return m, cmd
+	return m, tea.Batch(cmds...)
 }
 
 func (m model) View() string {
@@ -258,6 +315,8 @@ func (m model) View() string {
 		return m.viewConfirmDelete()
 	case viewEdit:
 		return m.viewEdit()
+	case viewAdd:
+		return m.viewAdd()
 	default:
 		return m.viewList()
 	}
@@ -358,6 +417,53 @@ func updateTransaction(id int, inputs []textinput.Model) tea.Cmd {
 		reason := fmt.Sprintf("Edited by %s from TUI@%s on %s", username, hostname, now)
 
 		if err := core.EditTransaction(id, updates, reason); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
+}
+
+func (m model) viewAdd() string {
+	var b strings.Builder
+	b.WriteString("\n新しい取引を追加します\n\n")
+
+	// 種別選択
+	buyCursor := " "
+	sellCursor := " "
+	if m.focusIndex == 0 {
+		if m.typeCursor == 0 {
+			buyCursor = "> "
+		}
+		if m.typeCursor == 1 {
+			sellCursor = "> "
+		}
+	}
+	b.WriteString(fmt.Sprintf("  種別: [ %s buy ] [ %s sell ]\n", buyCursor, sellCursor))
+
+	// 金額と口数の入力
+	b.WriteString(fmt.Sprintf("  金額: %s\n", m.inputs[0].View()))
+	b.WriteString(fmt.Sprintf("  口数: %s\n", m.inputs[1].View()))
+
+	b.WriteString("\n(esc: 取消 / return: 保存)\n")
+	return b.String()
+}
+
+func addTransaction(inputs []textinput.Model, typeCursor int) tea.Cmd {
+	return func() tea.Msg {
+		txType := "buy"
+		if typeCursor == 1 {
+			txType = "sell"
+		}
+		amount, err := strconv.Atoi(inputs[0].Value())
+		if err != nil {
+			return errMsg{fmt.Errorf("不正な金額")}
+		}
+		units, err := strconv.Atoi((inputs[1].Value()))
+		if err != nil {
+			return errMsg{fmt.Errorf("不正な口数")}
+		}
+
+		if err := data.AddTransaction(txType, amount, units); err != nil {
 			return errMsg{err}
 		}
 		return nil
