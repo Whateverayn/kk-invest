@@ -7,10 +7,12 @@ import (
 	"kk-invest/internal/data"
 	"os"
 	"os/user"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -20,6 +22,7 @@ type viewState int
 const (
 	viewList          viewState = iota // 一覧表示画面
 	viewConfirmDelete                  // 削除確認画面
+	viewEdit
 )
 
 // モデル
@@ -33,6 +36,9 @@ type model struct {
 	cursor       int                   // カーソル位置
 	view         viewState             // 現在のビュー状態
 	toDeleteID   int                   // 削除対象の取引ID
+	toEditID     int                   // 編集対象のID
+	inputs       []textinput.Model     // 編集用の入力フィールド
+	focusIndex   int                   // 入力フィールドのフォーカス場所
 }
 
 // メッセージ
@@ -59,9 +65,29 @@ func initialModel() model {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
+	inputs := make([]textinput.Model, 2)
+	var t textinput.Model
+	for i := range inputs {
+		t = textinput.New()
+		t.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+		t.CharLimit = 32
+		t.Width = 32
+		switch i {
+		case 0:
+			t.Placeholder = "金額 (円)"
+			t.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+			t.Focus()
+		case 1:
+			t.Placeholder = "口数"
+		}
+		inputs[i] = t
+	}
+
 	return model{
 		spinner:   s,
 		isLoading: true,
+		view:      viewList,
+		inputs:    inputs,
 	}
 }
 
@@ -115,9 +141,12 @@ func deleteTransaction(id int) tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch m.view {
+		// 一覧画面での操作
 		case viewList:
 			switch msg.String() {
 			case "ctrl+c", "q":
@@ -136,6 +165,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.toDeleteID = m.transactions[m.cursor].ID
 					m.view = viewConfirmDelete
 				}
+			case "e": // 編集画面へ
+				if len(m.transactions) > 0 {
+					m.view = viewEdit
+					m.toEditID = m.transactions[m.cursor].ID
+					// 既存の値をフォームにセット
+					m.inputs[0].SetValue(strconv.Itoa(m.transactions[m.cursor].AmountJPY))
+					m.inputs[1].SetValue(strconv.Itoa(m.transactions[m.cursor].Units))
+				}
 			}
 		case viewConfirmDelete:
 			switch msg.String() {
@@ -147,6 +184,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				)
 			case "n", "N", "esc", "enter":
 				m.view = viewList
+			}
+		case viewEdit:
+			switch msg.String() {
+			case "esc": // 一覧に戻る
+				m.view = viewList
+			case "enter": //保存
+				m.view = viewList
+				return m, tea.Sequence(
+					updateTransaction(m.toEditID, m.inputs),
+					fetchTransactions,
+					fetchStatus,
+				)
+			case "tab", "shift+tab", "up", "down":
+				s := msg.String()
+				if s == "up" || s == "shift+tab" {
+					m.focusIndex--
+				} else {
+					m.focusIndex++
+				}
+				if m.focusIndex > len(m.inputs)-1 {
+					m.focusIndex = 0
+				} else if m.focusIndex < 0 {
+					m.focusIndex = len(m.inputs) - 1
+				}
+				for i := 0; i <= len(m.inputs)-1; i++ {
+					if i == m.focusIndex {
+						m.inputs[i].Focus()
+						m.inputs[i].PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+					} else {
+						m.inputs[i].Blur()
+						m.inputs[i].PromptStyle = lipgloss.NewStyle()
+					}
+				}
+				return m, nil
 			}
 		}
 	case statusLoadedMsg:
@@ -165,7 +236,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 	}
-	return m, nil
+
+	if m.view == viewEdit {
+		m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
+	}
+
+	return m, cmd
 }
 
 func (m model) View() string {
@@ -180,6 +256,8 @@ func (m model) View() string {
 	switch m.view {
 	case viewConfirmDelete:
 		return m.viewConfirmDelete()
+	case viewEdit:
+		return m.viewEdit()
 	default:
 		return m.viewList()
 	}
@@ -224,11 +302,64 @@ func (m model) viewList() string {
 	if m.quitting {
 		b.WriteString(" 終了中...\n")
 	} else {
-		b.WriteString("  d: 削除 | q: 終了\n")
+		b.WriteString("  d: 削除 | e: 編集 | q: 終了\n")
 	}
 	return b.String()
 }
 
 func (m model) viewConfirmDelete() string {
 	return fmt.Sprintf("取引 (ID: %d) を削除します. 続行しますか? [y/N]\n", m.toDeleteID)
+}
+
+func (m model) viewEdit() string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n取引 (ID: %d) を編集中...\n\n", m.toEditID))
+	for i := range m.inputs {
+		b.WriteString(m.inputs[i].View())
+		if i < len(m.inputs)-1 {
+			b.WriteRune('\n')
+		}
+	}
+	b.WriteString("\n\n(esc: 取消 / return: 保存)\n")
+	return b.String()
+}
+
+func updateTransaction(id int, inputs []textinput.Model) tea.Cmd {
+	return func() tea.Msg {
+		updates := make(map[string]any)
+
+		// str -> int
+		amount, err := strconv.Atoi(inputs[0].Value())
+		if err != nil {
+			return errMsg{fmt.Errorf("不正な金額: %w", err)}
+		}
+		units, err := strconv.Atoi(inputs[1].Value())
+		if err != nil {
+			return errMsg{fmt.Errorf("不正な口数: %w", err)}
+		}
+
+		updates["amount_jpy"] = amount
+		updates["units"] = units
+
+		username := "unknown"
+		currentUser, err := user.Current()
+		if err == nil {
+			username = currentUser.Username
+		}
+
+		hostname := "unknown"
+		host, err := os.Hostname()
+		if err == nil {
+			hostname = host
+		}
+
+		now := time.Now().Format(time.RFC3339)
+
+		reason := fmt.Sprintf("Edited by %s from TUI@%s on %s", username, hostname, now)
+
+		if err := core.EditTransaction(id, updates, reason); err != nil {
+			return errMsg{err}
+		}
+		return nil
+	}
 }
