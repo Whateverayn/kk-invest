@@ -145,6 +145,7 @@ func deleteTransaction(id int) tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -285,17 +286,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
+		// return m, cmd
+		cmds = append(cmds, cmd)
 	}
 
-	var cmds []tea.Cmd
-	if m.view == viewEdit || m.view == viewAdd {
+	switch m.view {
+	case viewAdd:
 		if m.focusIndex > 0 {
 			inputIndex := m.focusIndex - 1
 			m.inputs[inputIndex], cmd = m.inputs[inputIndex].Update(msg)
 			cmds = append(cmds, cmd)
 		}
-		// m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
+	case viewEdit:
+		m.inputs[m.focusIndex], cmd = m.inputs[m.focusIndex].Update(msg)
+		cmds = append(cmds, cmd)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -425,20 +429,42 @@ func updateTransaction(id int, inputs []textinput.Model) tea.Cmd {
 
 func (m model) viewAdd() string {
 	var b strings.Builder
-	b.WriteString("\n新しい取引を追加します\n\n")
+	b.WriteString("\n[ 新しい取引を追加します ]\n\n")
 
-	// 種別選択
-	buyCursor := " "
-	sellCursor := " "
+	// 選択中でフォーカスなし
+	selectedStyle := lipgloss.NewStyle().Underline(true)
+	focusedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Underline(true)
+
+	buyStyle := lipgloss.NewStyle()
+	sellStyle := lipgloss.NewStyle()
+
+	if m.typeCursor == 0 {
+		buyStyle = selectedStyle
+	} else {
+		sellStyle = selectedStyle
+	}
+
 	if m.focusIndex == 0 {
 		if m.typeCursor == 0 {
-			buyCursor = "> "
+			buyStyle = focusedStyle
 		}
 		if m.typeCursor == 1 {
-			sellCursor = "> "
+			sellStyle = focusedStyle
 		}
 	}
-	b.WriteString(fmt.Sprintf("  種別: [ %s buy ] [ %s sell ]\n", buyCursor, sellCursor))
+	b.WriteString(fmt.Sprintf("  種別: [ %s ] [ %s ]\n", buyStyle.Render("buy"), sellStyle.Render("sell")))
+
+	if m.focusIndex == 1 {
+		m.inputs[0].PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	} else {
+		m.inputs[0].PromptStyle = lipgloss.NewStyle()
+	}
+
+	if m.focusIndex == 2 {
+		m.inputs[1].PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	} else {
+		m.inputs[1].PromptStyle = lipgloss.NewStyle()
+	}
 
 	// 金額と口数の入力
 	b.WriteString(fmt.Sprintf("  金額: %s\n", m.inputs[0].View()))
